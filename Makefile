@@ -2,7 +2,7 @@
 
 include config.mk
 
-SRC = ${NAME}.c
+SRC = dwmstatus.c
 OBJ = ${SRC:.c=.o}
 
 all: options ${NAME}
@@ -38,12 +38,15 @@ dist: clean
 
 install: all
 	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
+	@killall ${NAME} || true
 	@mkdir -p ${DESTDIR}${PREFIX}/bin
 	@cp -f ${NAME} ${DESTDIR}${PREFIX}/bin
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}
+	@${NAME} & disown
 
 uninstall:
 	@echo removing executable file from ${DESTDIR}${PREFIX}/bin
 	@rm -f ${DESTDIR}${PREFIX}/bin/${NAME}
+	@killall ${NAME} || true
 
 .PHONY: all options clean dist install uninstall
