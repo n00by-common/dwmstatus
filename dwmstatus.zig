@@ -125,11 +125,12 @@ pub fn main() !void {
         try writer.writeByte(spin());
 
         std.log.info("Result: '{s}'", .{stream.getWritten()});
-        std.time.sleep(1_000_000_000);
 
         buffer[stream.getWritten().len] = 0;
 
         set_title(&buffer);
+
+        std.time.sleep(1_000_000_000);
     }
 }
 
