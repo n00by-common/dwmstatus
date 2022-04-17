@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const build_options = @import("build_options");
+
 extern fn setup() void;
 extern fn set_title([*]const u8) void;
 
@@ -35,8 +37,6 @@ fn readProcstat() !Procstat {
     return result;
 }
 
-var battery_dir: ?std.fs.Dir = null;
-
 var last_stat = Procstat{.idle = 1, .sum = 1};
 
 fn addCPUUsage(writer: anytype) !void {
@@ -61,11 +61,44 @@ const sysinfo = @cImport({
 fn addMemoryUsage(writer: anytype) !void {
     var info: sysinfo.struct_sysinfo = undefined;
     if(sysinfo.sysinfo(&info) < 0) {
-        info.totalram = 0;
-        info.freeram = 1;
+        try writer.print("Mem: !!!%", .{});
+        return;
     }
 
     try writer.print("Mem: {d:0>3}% ", .{((info.totalram - info.freeram) * 100)/info.totalram});
+}
+
+var bat_now: std.fs.File = undefined;
+var bat_full: std.fs.File = undefined;
+var bat_status: std.fs.File = undefined;
+
+fn addBattery(writer: anytype) !void {
+    if(comptime(build_options.battery_path == null))
+        return;
+
+    var buffer: [128]u8 = undefined;
+    const charge_now = try readFileUnsigned(usize, bat_now, &buffer);
+    const charge_full = try readFileUnsigned(usize, bat_full, &buffer);
+
+    const battery_status_chr: u8 = blk: {
+        const battery_status = try readFileString(bat_status, &buffer);
+
+        if(std.mem.eql(u8, battery_status, "Discharging"))
+            break :blk '-';
+
+        if(std.mem.eql(u8, battery_status, "Charging"))
+            break :blk '+';
+
+        if(std.mem.eql(u8, battery_status, "Full"))
+            break :blk '^';
+
+        std.log.debug("Unknown battery status: {s}", .{battery_status});
+        break :blk '?';
+    };
+
+    const charge_percentage = (charge_now * 100) / charge_full;
+
+    try writer.print("Bat: {d:0>3}%{c} ", .{charge_percentage, battery_status_chr});
 }
 
 const time = @cImport({
@@ -77,14 +110,14 @@ fn addTime(writer: anytype) !void {
     var tim: time.time_t = time.time(null);
     var localtime: *time.struct_tm = time.localtime(&tim) orelse return error.localtime;
 
-    if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, "Week %V, %a %d %b %H:%M:%S %Y", localtime) == 0)
+    if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, build_options.time_format, localtime) == 0)
         return error.strftime;
 
     try writer.print("{s} ", .{buf[0..std.mem.indexOfScalar(u8, &buf, 0) orelse unreachable]});
 }
 
 fn readFileString(file: std.fs.File, buffer: []u8) ![]u8 {
-    return buffer[0..try file.preadAll(buffer, 0)];
+    return buffer[0..(try file.preadAll(buffer, 0)) - 1];
 }
 
 fn readFileUnsigned(comptime T: type, file: std.fs.File, buffer: []u8) !T {
@@ -108,11 +141,22 @@ fn spin() u8 {
 }
 
 pub fn main() !void {
-    _ = stdlib.setenv("TZ", "Europe/Stockholm", 1);
+    if(build_options.time_zone) |tz| {
+        _ = stdlib.setenv("TZ", tz.ptr, 1);
+    }
 
     procstat_file = try std.fs.openFileAbsolute("/proc/stat", .{});
 
     setup();
+
+    if(comptime(build_options.battery_path)) |bpath| {
+        var battery_dir = try std.fs.openDirAbsolute(bpath, .{});
+        defer battery_dir.close();
+
+        bat_now = try battery_dir.openFileZ("charge_now", .{});
+        bat_full = try battery_dir.openFileZ("charge_full", .{});
+        bat_status = try battery_dir.openFileZ("status", .{});
+    }
 
     while(true) {
         var buffer: [128]u8 = undefined;
@@ -121,6 +165,7 @@ pub fn main() !void {
 
         try addCPUUsage(&writer);
         try addMemoryUsage(&writer);
+        try addBattery(&writer);
         try addTime(&writer);
         try writer.writeByte(spin());
 
