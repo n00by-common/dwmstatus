@@ -47,6 +47,11 @@ fn addCPUUsage(writer: anytype) !void {
 
     const work_delta = time_delta - idle_delta;
 
+    if(time_delta == 0) {
+        try writer.print("CPU: !!!%", .{});
+        return;
+    }
+
     const work_percentage = (work_delta * 100) / time_delta;
 
     last_stat = current;
