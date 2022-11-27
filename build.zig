@@ -4,7 +4,6 @@ pub fn build(b: *std.build.Builder) !void {
     const exe = b.addExecutable("dwmstatus", "dwmstatus.zig");
     exe.linkSystemLibrary("X11");
     exe.addLibraryPath("/usr/lib");
-    exe.addCSourceFile("dwmstatus.c", &.{});
 
     const battery_path: ?[]const u8 = blk: {
         const user_input = b.option([]const u8, "battery_path", "Path to battery directory");

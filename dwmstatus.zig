@@ -2,9 +2,6 @@ const std = @import("std");
 
 const build_options = @import("build_options");
 
-extern fn setup() void;
-extern fn set_title([*]const u8) void;
-
 const Procstat = struct {
     idle: u64,
     sum: u64,
@@ -145,6 +142,10 @@ fn spin() u8 {
     return spin_chars[current_spin_char];
 }
 
+const x_c = @cImport({
+    @cInclude("X11/Xlib.h");
+});
+
 pub fn main() !void {
     if(build_options.time_zone) |tz| {
         _ = stdlib.setenv("TZ", tz.ptr, 1);
@@ -152,7 +153,8 @@ pub fn main() !void {
 
     procstat_file = try std.fs.openFileAbsolute("/proc/stat", .{});
 
-    setup();
+    const display = x_c.XOpenDisplay(null);
+    const root_window = x_c.XDefaultRootWindow(display);
 
     if(comptime(build_options.battery_path)) |bpath| {
         var battery_dir = try std.fs.openDirAbsolute(bpath, .{});
@@ -178,7 +180,8 @@ pub fn main() !void {
 
         buffer[stream.getWritten().len] = 0;
 
-        set_title(&buffer);
+        _ = x_c.XStoreName(display, root_window, &buffer[0]);
+        _ = x_c.XSync(display, 0);
 
         std.time.sleep(1_000_000_000);
     }
