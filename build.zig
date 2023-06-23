@@ -1,7 +1,10 @@
 const std = @import("std");
 
 pub fn build(b: *std.build.Builder) !void {
-    const exe = b.addExecutable("dwmstatus", "dwmstatus.zig");
+    const exe = b.addExecutable(.{
+        .name = "dwmstatus",
+        .root_source_file = .{.path = "dwmstatus.zig"},
+    });
     exe.linkSystemLibrary("X11");
     exe.addLibraryPath("/usr/lib");
 
@@ -24,12 +27,11 @@ pub fn build(b: *std.build.Builder) !void {
     };
 
     const opts = b.addOptions();
-    opts.addOption(?[]const u8, "battery_path", battery_path);
     opts.addOption([:0]const u8, "time_format", time_format);
     opts.addOption(?[:0]const u8, "time_zone", time_zone);
 
     exe.addOptions("build_options", opts);
 
     exe.linkLibC();
-    exe.install();
+    b.installArtifact(exe);
 }
