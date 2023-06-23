@@ -5,15 +5,6 @@ pub fn build(b: *std.build.Builder) !void {
     exe.linkSystemLibrary("X11");
     exe.addLibraryPath("/usr/lib");
 
-    const battery_path: ?[]const u8 = blk: {
-        const user_input = b.option([]const u8, "battery_path", "Path to battery directory");
-        if(user_input) |ui| {
-            if(ui.len > 0)
-                break :blk ui;
-        }
-        break :blk null;
-    };
-
     const time_format: [:0]const u8 = blk: {
         const user_input = b.option([]const u8, "time_format", "Format for time, same format as strftime");
         if(user_input) |ui| {

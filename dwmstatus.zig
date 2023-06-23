@@ -70,38 +70,35 @@ fn addMemoryUsage(writer: anytype) !void {
     try writer.print("Mem: {d:0>3}% ", .{((info.totalram - info.freeram) * 100)/info.totalram});
 }
 
-var bat_now: std.fs.File = undefined;
-var bat_full: std.fs.File = undefined;
-var bat_status: std.fs.File = undefined;
+const Battery = struct {
+    name: []const u8,
+    now_file: std.fs.File,
+    full_file: std.fs.File,
+    status_file: std.fs.File,
 
-fn addBattery(writer: anytype) !void {
-    if(comptime(build_options.battery_path == null))
-        return;
+    fn add(self: @This(), writer: anytype) !void {
+        var buffer: [128]u8 = undefined;
+        const now = try readFileUnsigned(usize, self.now_file, &buffer);
+        const full = try readFileUnsigned(usize, self.full_file, &buffer);
+        const status_chr: u8 = blk: {
+            const status = try readFileString(self.status_file, &buffer);
+            if(std.mem.eql(u8, status, "Discharging"))
+                break :blk '-';
 
-    var buffer: [128]u8 = undefined;
-    const charge_now = try readFileUnsigned(usize, bat_now, &buffer);
-    const charge_full = try readFileUnsigned(usize, bat_full, &buffer);
+            if(std.mem.eql(u8, status, "Charging"))
+                break :blk '+';
 
-    const battery_status_chr: u8 = blk: {
-        const battery_status = try readFileString(bat_status, &buffer);
+            if(std.mem.eql(u8, status, "Full"))
+                break :blk '^';
 
-        if(std.mem.eql(u8, battery_status, "Discharging"))
-            break :blk '-';
+            std.log.debug("Unknown battery status: {s}", .{status});
+            break :blk '?';
+        };
+        const charge_percentage = (now * 100) / full;
 
-        if(std.mem.eql(u8, battery_status, "Charging"))
-            break :blk '+';
-
-        if(std.mem.eql(u8, battery_status, "Full"))
-            break :blk '^';
-
-        std.log.debug("Unknown battery status: {s}", .{battery_status});
-        break :blk '?';
-    };
-
-    const charge_percentage = (charge_now * 100) / charge_full;
-
-    try writer.print("Bat: {d:0>3}%{c} ", .{charge_percentage, battery_status_chr});
-}
+        try writer.print("{s}: {d:0>3}%{c} ", .{self.name, charge_percentage, status_chr});
+    }
+};
 
 const time = @cImport({
     @cInclude("time.h");
@@ -156,13 +153,37 @@ pub fn main() !void {
     const display = x_c.XOpenDisplay(null);
     const root_window = x_c.XDefaultRootWindow(display);
 
-    if(comptime(build_options.battery_path)) |bpath| {
-        var battery_dir = try std.fs.openDirAbsolute(bpath, .{});
-        defer battery_dir.close();
+    var batteries = std.ArrayListUnmanaged(Battery){};
+    var battery_data_buffer: [0x1000]u8 = undefined;
+    {
+       var battery_allocator = std.heap.FixedBufferAllocator.init(&battery_data_buffer);
+       var ps_dir = try std.fs.openIterableDirAbsoluteZ("/sys/class/power_supply", .{});
+       defer ps_dir.close();
+       var it = ps_dir.iterate();
+       while(try it.next()) |dent| {
+           if(!std.mem.eql(u8, dent.name[0..3], "BAT")) continue;
+           for(dent.name[3..]) |chr| {
+               if(!std.ascii.isDigit(chr)) continue;
+           }
 
-        bat_now = try battery_dir.openFileZ("charge_now", .{});
-        bat_full = try battery_dir.openFileZ("charge_full", .{});
-        bat_status = try battery_dir.openFileZ("status", .{});
+           var battery_dir = try ps_dir.dir.openDir(dent.name, .{});
+           defer battery_dir.close();
+
+           outer: { inline for(.{"charge", "energy"}) |prefix| blk: {
+               const now_file = battery_dir.openFileZ(prefix ++ "_now", .{}) catch break :blk;
+               const full_file = battery_dir.openFileZ(prefix ++ "_full", .{}) catch break :blk;
+               const status_file = try battery_dir.openFileZ("status", .{});
+               try batteries.append(battery_allocator.allocator(), .{
+                   .name = try battery_allocator.allocator().dupe(u8, dent.name),
+                   .now_file = now_file,
+                   .full_file = full_file,
+                   .status_file = status_file,
+               });
+               break :outer;
+           } else {
+               std.log.err("Could not open any files to get battery charge for battery {s}.\n", .{dent.name});
+           }}
+       }
     }
 
     while(true) {
@@ -172,7 +193,9 @@ pub fn main() !void {
 
         try addCPUUsage(&writer);
         try addMemoryUsage(&writer);
-        try addBattery(&writer);
+        for(batteries.items) |bat| {
+            try bat.add(&writer);
+        }
         try addTime(&writer);
         try writer.writeByte(spin());
 
