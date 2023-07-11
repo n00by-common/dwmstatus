@@ -109,7 +109,7 @@ fn addTime(writer: anytype) !void {
     var tim: time.time_t = time.time(null);
     var localtime: *time.struct_tm = time.localtime(&tim) orelse return error.localtime;
 
-    if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, @ptrCast([*c]const u8, build_options.time_format), localtime) == 0)
+    if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, @ptrCast(build_options.time_format), localtime) == 0)
         return error.strftime;
 
     try writer.print("{s} ", .{buf[0..std.mem.indexOfScalar(u8, &buf, 0) orelse unreachable]});
