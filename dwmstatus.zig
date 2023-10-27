@@ -16,18 +16,18 @@ fn readProcstat() !Procstat {
     var result: Procstat = undefined;
     var it = std.mem.tokenize(u8, data, " \n\t");
 
-    _ = it.next() orelse unreachable; // cpuname
+    _ = it.next().?; // cpuname
     result.sum = 0;
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // user
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // nice
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // system
-    result.idle = try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // idle
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // iowait
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // irq
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // softirq
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // steal
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // guest
-    result.sum += try std.fmt.parseUnsigned(usize, it.next() orelse unreachable, 10); // guest_nice
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // user
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // nice
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // system
+    result.idle = try std.fmt.parseUnsigned(usize, it.next().?, 10); // idle
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // iowait
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // irq
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // softirq
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // steal
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // guest
+    result.sum += try std.fmt.parseUnsigned(usize, it.next().?, 10); // guest_nice
 
     result.sum += result.idle;
 
@@ -112,7 +112,7 @@ fn addTime(writer: anytype) !void {
     if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, @ptrCast(build_options.time_format), localtime) == 0)
         return error.strftime;
 
-    try writer.print("{s} ", .{buf[0..std.mem.indexOfScalar(u8, &buf, 0) orelse unreachable]});
+    try writer.print("{s} ", .{buf[0..std.mem.indexOfScalar(u8, &buf, 0).?]});
 }
 
 fn readFileString(file: std.fs.File, buffer: []u8) ![]u8 {
