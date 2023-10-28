@@ -143,7 +143,9 @@ const Battery = struct {
 
         inline for(.{"charge", "energy"}) |prefix| blk: {
             const now_file = battery_dir.openFileZ(prefix ++ "_now", .{}) catch break :blk;
+            errdefer now_file.close();
             const full_file = battery_dir.openFileZ(prefix ++ "_full", .{}) catch break :blk;
+            errdefer full_file.close();
             const status_file = try battery_dir.openFileZ("status", .{});
             self.fds = .{
                 .now = now_file,
