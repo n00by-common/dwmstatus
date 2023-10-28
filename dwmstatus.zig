@@ -161,7 +161,7 @@ pub fn main() !void {
        defer ps_dir.close();
        var it = ps_dir.iterate();
        while(try it.next()) |dent| {
-           if(!std.mem.eql(u8, dent.name[0..3], "BAT")) continue;
+           if(!std.mem.startsWith(u8, dent.name, "BAT")) continue;
            for(dent.name[3..]) |chr| {
                if(!std.ascii.isDigit(chr)) continue;
            }
