@@ -7,7 +7,21 @@ const Procstat = struct {
     sum: u64,
 };
 
+var error_log: ?std.fs.File = null;
 var procstat_file: std.fs.File = undefined;
+var ps_dir: std.fs.IterableDir = undefined;
+
+fn log(comptime fmt: []const u8, args: anytype) void {
+    if(error_log) |l| {
+        l.writer().print(fmt ++ "\n", args) catch {};
+    }
+}
+
+inline fn log_error(comptime fmt: []const u8, args: anytype) void {
+    log(fmt, args);
+    const trace = (@errorReturnTrace() orelse return).*;
+    log("{}", .{trace});
+}
 
 fn readProcstat() !Procstat {
     var buffer: [1024]u8 = undefined;
@@ -72,31 +86,74 @@ fn addMemoryUsage(writer: anytype) !void {
 
 const Battery = struct {
     name: []const u8,
-    now_file: std.fs.File,
-    full_file: std.fs.File,
-    status_file: std.fs.File,
+    fds: ?struct {
+        now: std.fs.File,
+        full: std.fs.File,
+        status: std.fs.File,
+    },
 
-    fn add(self: @This(), writer: anytype) !void {
+    fn add_impl(self: @This(), writer: anytype, fds: anytype) !void {
         var buffer: [128]u8 = undefined;
-        const now = try readFileUnsigned(usize, self.now_file, &buffer);
-        const full = try readFileUnsigned(usize, self.full_file, &buffer);
+        const now = try readFileUnsigned(usize, fds.now, &buffer);
+        const full = try readFileUnsigned(usize, fds.full, &buffer);
         const status_chr: u8 = blk: {
-            const status = try readFileString(self.status_file, &buffer);
+            const status = try readFileString(fds.status, &buffer);
             if(std.mem.eql(u8, status, "Discharging"))
                 break :blk '-';
 
             if(std.mem.eql(u8, status, "Charging"))
                 break :blk '+';
 
+            if(std.mem.eql(u8, status, "Not charging"))
+                break :blk '~';
+
             if(std.mem.eql(u8, status, "Full"))
                 break :blk '^';
 
-            std.log.debug("Unknown battery status: {s}", .{status});
+            log("Unknown battery status: {s}", .{status});
             break :blk '?';
         };
         const charge_percentage = (now * 100) / full;
-
         try writer.print("{s}: {d:0>3}%{c} ", .{self.name, charge_percentage, status_chr});
+    }
+
+    fn add(self: *@This(), writer: anytype) !void {
+        while(true) {
+            if(self.fds) |fds| {
+                self.add_impl(writer, fds) catch |err| {
+                    log_error("Got error {!} while reading from {s}", .{err, self.name});
+                    fds.now.close();
+                    fds.full.close();
+                    fds.status.close();
+                    self.fds = null;
+                };
+            }
+            if(self.fds == null) {
+                self.open() catch break;
+                continue;
+            }
+            return;
+        }
+        try writer.print("{s}: ERR!! ", .{self.name});
+    }
+
+    fn open(self: *@This()) !void {
+        var battery_dir = try ps_dir.dir.openDir(self.name, .{});
+        defer battery_dir.close();
+
+        inline for(.{"charge", "energy"}) |prefix| blk: {
+            const now_file = battery_dir.openFileZ(prefix ++ "_now", .{}) catch break :blk;
+            const full_file = battery_dir.openFileZ(prefix ++ "_full", .{}) catch break :blk;
+            const status_file = try battery_dir.openFileZ("status", .{});
+            self.fds = .{
+                .now = now_file,
+                .full = full_file,
+                .status = status_file,
+            };
+            return;
+        } else {
+            log("Could not open any files to get battery charge for battery {s}.\n", .{self.name});
+        }
     }
 };
 
@@ -143,7 +200,19 @@ const x_c = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
+pub fn panic(msg: []const u8, st: ?*std.builtin.StackTrace, n: ?usize) noreturn {
+    _ = st;
+    _ = n;
+    log("PANIC: {s}", .{msg});
+    std.os.exit(1);
+}
+
 pub fn main() !void {
+    if(std.fs.openFileAbsoluteZ("/root/dwmstatus_log.txt", .{.mode = .write_only})) |file| {
+        error_log = file;
+    }
+    else |_| { }
+
     if(build_options.time_zone) |tz| {
         _ = stdlib.setenv("TZ", tz.ptr, 1);
     }
@@ -154,36 +223,25 @@ pub fn main() !void {
     const root_window = x_c.XDefaultRootWindow(display);
 
     var batteries = std.ArrayListUnmanaged(Battery){};
-    var battery_data_buffer: [0x1000]u8 = undefined;
+    ps_dir = try std.fs.openIterableDirAbsoluteZ("/sys/class/power_supply", .{});
     {
-       var battery_allocator = std.heap.FixedBufferAllocator.init(&battery_data_buffer);
-       var ps_dir = try std.fs.openIterableDirAbsoluteZ("/sys/class/power_supply", .{});
-       defer ps_dir.close();
-       var it = ps_dir.iterate();
-       while(try it.next()) |dent| {
-           if(!std.mem.startsWith(u8, dent.name, "BAT")) continue;
-           for(dent.name[3..]) |chr| {
-               if(!std.ascii.isDigit(chr)) continue;
-           }
+        var it = ps_dir.iterate();
+        while(try it.next()) |dent| {
+            if(!std.mem.startsWith(u8, dent.name, "BAT")) continue;
+            for(dent.name[3..]) |chr| {
+                if(!std.ascii.isDigit(chr)) continue;
+            }
 
-           var battery_dir = try ps_dir.dir.openDir(dent.name, .{});
-           defer battery_dir.close();
-
-           outer: { inline for(.{"charge", "energy"}) |prefix| blk: {
-               const now_file = battery_dir.openFileZ(prefix ++ "_now", .{}) catch break :blk;
-               const full_file = battery_dir.openFileZ(prefix ++ "_full", .{}) catch break :blk;
-               const status_file = try battery_dir.openFileZ("status", .{});
-               try batteries.append(battery_allocator.allocator(), .{
-                   .name = try battery_allocator.allocator().dupe(u8, dent.name),
-                   .now_file = now_file,
-                   .full_file = full_file,
-                   .status_file = status_file,
-               });
-               break :outer;
-           } else {
-               std.log.err("Could not open any files to get battery charge for battery {s}.\n", .{dent.name});
-           }}
-       }
+            var bat = Battery{
+                .name = dent.name,
+                .fds = null,
+            };
+            bat.open() catch continue;
+            try batteries.append(std.heap.c_allocator, .{
+                .name = try std.heap.c_allocator.dupeZ(u8, dent.name),
+                .fds = bat.fds,
+            });
+        }
     }
 
     while(true) {
@@ -193,13 +251,11 @@ pub fn main() !void {
 
         try addCPUUsage(&writer);
         try addMemoryUsage(&writer);
-        for(batteries.items) |bat| {
+        for(batteries.items) |*bat| {
             try bat.add(&writer);
         }
         try addTime(&writer);
         try writer.writeByte(spin());
-
-        std.log.info("Result: '{s}'", .{stream.getWritten()});
 
         buffer[stream.getWritten().len] = 0;
 
