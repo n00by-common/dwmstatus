@@ -9,7 +9,8 @@ const Procstat = struct {
 
 var error_log: ?std.fs.File = null;
 var procstat_file: std.fs.File = undefined;
-var ps_dir: std.fs.IterableDir = undefined;
+var procmeminfo_file: std.fs.File = undefined;
+var ps_dir: std.fs.Dir = undefined;
 
 fn log(comptime fmt: []const u8, args: anytype) void {
     if(error_log) |l| {
@@ -70,18 +71,22 @@ fn addCPUUsage(writer: anytype) !void {
     try writer.print("CPU: {d:0>3}% ", .{work_percentage});
 }
 
-const sysinfo = @cImport({
-    @cInclude("sys/sysinfo.h");
-});
-
 fn addMemoryUsage(writer: anytype) !void {
-    var info: sysinfo.struct_sysinfo = undefined;
-    if(sysinfo.sysinfo(&info) < 0) {
-        try writer.print("Mem: !!!%", .{});
-        return;
-    }
+    var buffer: [1024]u8 = undefined;
+    const data = buffer[0..try procmeminfo_file.preadAll(&buffer, 0)];
+    var it = std.mem.tokenize(u8, data, " \n\t");
 
-    try writer.print("Mem: {d:0>3}% ", .{((info.totalram - info.freeram) * 100)/info.totalram});
+    _ = it.next(); // MemTotal:
+    const total = try std.fmt.parseUnsigned(usize, it.next().?, 10);
+    _ = it.next(); // kB
+    _ = it.next(); // MemFree:
+    _ = it.next();
+    _ = it.next(); // kB
+    _ = it.next(); // MemAvailable:
+    const available = try std.fmt.parseUnsigned(usize, it.next().?, 10);
+    _ = it.next(); // kB
+
+    try writer.print("Mem: {d:0>3}% ", .{((total - available) * 100)/total});
 }
 
 const Battery = struct {
@@ -220,6 +225,7 @@ pub fn main() !void {
     }
 
     procstat_file = try std.fs.openFileAbsolute("/proc/stat", .{});
+    procmeminfo_file = try std.fs.openFileAbsolute("/proc/meminfo", .{});
 
     const display = x_c.XOpenDisplay(null);
     const root_window = x_c.XDefaultRootWindow(display);
