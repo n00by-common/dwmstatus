@@ -138,7 +138,7 @@ const Battery = struct {
     }
 
     fn open(self: *@This()) !void {
-        var battery_dir = try ps_dir.dir.openDir(self.name, .{});
+        var battery_dir = try ps_dir.openDir(self.name, .{});
         defer battery_dir.close();
 
         inline for(.{"charge", "energy"}) |prefix| blk: {
@@ -166,7 +166,7 @@ const time = @cImport({
 fn addTime(writer: anytype) !void {
     var buf: [128]u8 = undefined;
     var tim: time.time_t = time.time(null);
-    var localtime: *time.struct_tm = time.localtime(&tim) orelse return error.localtime;
+    const localtime = time.localtime(&tim) orelse return error.localtime;
 
     if(time.strftime(&buf, @sizeOf(@TypeOf(buf)) - 1, @ptrCast(build_options.time_format), localtime) == 0)
         return error.strftime;
@@ -206,7 +206,7 @@ pub fn panic(msg: []const u8, st: ?*std.builtin.StackTrace, n: ?usize) noreturn 
     _ = st;
     _ = n;
     log("PANIC: {s}", .{msg});
-    std.os.exit(1);
+    std.os.linux.exit(1);
 }
 
 pub fn main() !void {
@@ -225,7 +225,7 @@ pub fn main() !void {
     const root_window = x_c.XDefaultRootWindow(display);
 
     var batteries = std.ArrayListUnmanaged(Battery){};
-    ps_dir = try std.fs.openIterableDirAbsoluteZ("/sys/class/power_supply", .{});
+    ps_dir = try std.fs.openDirAbsoluteZ("/sys/class/power_supply", .{.iterate = true});
     {
         var it = ps_dir.iterate();
         while(try it.next()) |dent| {

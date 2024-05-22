@@ -1,12 +1,14 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) !void {
+pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "dwmstatus",
         .root_source_file = .{.path = "dwmstatus.zig"},
+        .target = b.standardTargetOptions(.{}),
+        .optimize = .ReleaseSmall,
     });
     exe.linkSystemLibrary("X11");
-    exe.addLibraryPath("/usr/lib");
+    exe.addLibraryPath(.{.path = "/usr/lib"});
 
     const time_format: [:0]const u8 = blk: {
         const user_input = b.option([]const u8, "time_format", "Format for time, same format as strftime");
@@ -30,7 +32,7 @@ pub fn build(b: *std.build.Builder) !void {
     opts.addOption([:0]const u8, "time_format", time_format);
     opts.addOption(?[:0]const u8, "time_zone", time_zone);
 
-    exe.addOptions("build_options", opts);
+    exe.root_module.addOptions("build_options", opts);
 
     exe.linkLibC();
     b.installArtifact(exe);
